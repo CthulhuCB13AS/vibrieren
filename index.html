@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1a19">
+<title>Vibrationsmesser</title>
+<style>
+  /* Dark permanently - not tied to prefers-color-scheme, so it stays dark
+     regardless of the phone's system setting. */
+  .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5; /* blue: Zeitsignal */
+    --series-2:       #d95926; /* orange: Peak-Markierung */
+    --series-3:       #199e70; /* aqua: Statuspunkt "aktiv" */
+    --status-critical:#e66767;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #0d0d0d; /* matches --page; set directly so it applies before/outside .viz-root, e.g. on iOS overscroll */
+    color: #ffffff;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .viz-root {
+    background: var(--page);
+    min-height: 100vh;
+    padding: env(safe-area-inset-top, 16px) 14px calc(env(safe-area-inset-bottom, 16px) + 24px);
+  }
+  header { padding: 6px 2px 14px; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { font-size: 13px; color: var(--text-secondary); line-height: 1.45; margin: 0; }
+
+  .panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+
+  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--text-secondary); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--baseline); flex: none; }
+  .dot.live { background: var(--series-3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-3) 25%, transparent); }
+  .dot.err { background: var(--status-critical); }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-size: 15px; font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    border-radius: 10px;
+    padding: 12px 16px;
+    flex: 1 1 auto;
+    min-width: 120px;
+    cursor: pointer;
+  }
+  button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+  button.primary.stop { background: var(--status-critical); border-color: var(--status-critical); }
+  button:disabled { opacity: 0.45; }
+  button:active { transform: scale(0.98); }
+
+  .msg { font-size: 13px; color: var(--status-critical); margin-top: 10px; line-height: 1.4; display: none; }
+  .msg.show { display: block; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .stat {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+  .stat .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat .value { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .stat .unit { font-size: 13px; color: var(--text-secondary); font-weight: 400; margin-left: 2px; }
+
+  .chart-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+  .chart-caption { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  canvas { display: block; width: 100%; touch-action: none; }
+
+  .tooltip {
+    position: absolute;
+    background: var(--text-primary);
+    color: var(--surface-1);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    padding: 5px 8px;
+    border-radius: 6px;
+    pointer-events: none;
+    white-space: nowrap;
+    transform: translate(-50%, -110%);
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+  .tooltip.show { opacity: 1; }
+  .chart-wrap { position: relative; }
+
+  details { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+  summary { cursor: pointer; font-weight: 600; color: var(--text-primary); padding: 4px 0; }
+  footer { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <h1>Vibrationsmesser</h1>
+    <p class="sub">Nutzt den Beschleunigungssensor deines Handys, um kleine Vibrationen live als Zeitsignal und Frequenzspektrum darzustellen.</p>
+  </header>
+
+  <div class="panel">
+    <div class="status-row">
+      <span id="statusDot" class="dot"></span>
+      <span id="statusText">Sensor nicht aktiv</span>
+    </div>
+    <div class="btn-row">
+      <button id="startBtn" class="primary">Sensor aktivieren</button>
+      <button id="tareBtn" disabled>Nullpunkt setzen</button>
+    </div>
+    <p id="errMsg" class="msg"></p>
+  </div>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Aktuell</div>
+      <div class="value"><span id="curVal">–</span><span class="unit">mg</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">Spitze-Spitze (3 s)</div>
+      <div class="value"><span id="ppVal">–</span><span class="unit">mg</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">Dominante Frequenz</div>
+      <div class="value"><span id="freqVal">–</span><span class="unit">Hz</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">Abtastrate</div>
+      <div class="value"><span id="rateVal">–</span><span class="unit">Hz</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-title">Beschleunigung über Zeit</div>
+    <div class="chart-caption">letzte 5 Sekunden, Achse skaliert automatisch auf den aktuellen Ausschlag</div>
+    <div class="chart-wrap">
+      <canvas id="timeChart" height="160"></canvas>
+      <div id="timeTooltip" class="tooltip"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="chart-title">Frequenzspektrum</div>
+    <div class="chart-caption">0 Hz bis halbe Abtastrate, orange = stärkste Frequenz</div>
+    <div class="chart-wrap">
+      <canvas id="freqChart" height="160"></canvas>
+      <div id="freqTooltip" class="tooltip"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Hinweise & Grenzen</summary>
+      <p>Das Telefon muss möglichst fest mit der vibrierenden Oberfläche gekoppelt sein (z. B. angeklebt oder mit Klebeband fixiert) – lose aufgelegt werden feine Vibrationen gedämpft.</p>
+      <p>Die maximal erkennbare Frequenz ist durch die Abtastrate begrenzt (Nyquist = Abtastrate ÷ 2). Bei rund 60 Hz Abtastrate sind das etwa 30 Hz – höherfrequente Anteile (z. B. Motorharmonische) werden nicht erfasst.</p>
+      <p>Consumer-Beschleunigungssensoren haben ein Eigenrauschen im Bereich weniger Milli-g. Sehr kleine, aber reale Vibrationen können daher im Sensorrauschen untergehen; die automatische Skalierung macht das Rauschen selbst sichtbar, das ist normal.</p>
+      <p>iOS verlangt eine explizite Freigabe für Bewegungsdaten und funktioniert nur über HTTPS (z. B. GitHub Pages) – nicht über eine im GitHub-App-Browser geöffnete Seite, sondern direkt in Safari.</p>
+    </details>
+  </div>
+
+  <footer>Läuft vollständig lokal im Browser – es werden keine Daten übertragen oder gespeichert.</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- DOM ----------
+  var startBtn = document.getElementById('startBtn');
+  var tareBtn = document.getElementById('tareBtn');
+  var statusDot = document.getElementById('statusDot');
+  var statusText = document.getElementById('statusText');
+  var errMsg = document.getElementById('errMsg');
+  var curValEl = document.getElementById('curVal');
+  var ppValEl = document.getElementById('ppVal');
+  var freqValEl = document.getElementById('freqVal');
+  var rateValEl = document.getElementById('rateVal');
+  var timeCanvas = document.getElementById('timeChart');
+  var freqCanvas = document.getElementById('freqChart');
+  var timeTooltip = document.getElementById('timeTooltip');
+  var freqTooltip = document.getElementById('freqTooltip');
+
+  var G = 9.80665;
+  var FFT_SIZE = 256;
+  var MAX_SAMPLES = 2000;
+  var TIME_WINDOW_MS = 5000;
+
+  var running = false;
+  var buffer = []; // {t, ax, ay, az, mag}
+  var gravityEst = { x: 0, y: 0, z: 0 };
+  var gravityInit = false;
+  var tareOffset = { x: 0, y: 0, z: 0 };
+  var taring = false;
+  var tareSamples = [];
+  var lastSpectrum = null; // {bins:[{freq,mag}], sampleRate, peak:{freq,mag}}
+  var lastSampleRate = 0;
+  var wakeLock = null;
+
+  function css(name) {
+    return getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(name).trim();
+  }
+
+  // ---------- permission / start ----------
+  function showError(msg) {
+    errMsg.textContent = msg;
+    errMsg.classList.add('show');
+    statusDot.className = 'dot err';
+  }
+
+  function hasMotionSupport() {
+    return typeof window.DeviceMotionEvent !== 'undefined';
+  }
+
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+      }
+    } catch (e) { /* ignore - not critical */ }
+  }
+
+  async function start() {
+    errMsg.classList.remove('show');
+    if (!hasMotionSupport()) {
+      showError('Kein Bewegungssensor gefunden. Bitte diese Seite auf einem Smartphone (z. B. iPhone in Safari) öffnen, nicht am Desktop.');
+      return;
+    }
+    startBtn.disabled = true;
+    startBtn.textContent = 'Verbinde…';
+    try {
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        var res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') {
+          showError('Zugriff auf Bewegungsdaten wurde nicht erlaubt. Erlaube den Zugriff über Einstellungen > Safari > Bewegung & Ausrichtung, oder lade die Seite neu und bestätige die Abfrage.');
+          startBtn.disabled = false;
+          startBtn.textContent = 'Sensor aktivieren';
+          return;
+        }
+      }
+      window.addEventListener('devicemotion', handleMotion, true);
+      requestWakeLock();
+      running = true;
+      buffer = [];
+      gravityInit = false;
+      statusDot.className = 'dot live';
+      statusText.textContent = 'Sensor aktiv – misst…';
+      startBtn.textContent = 'Stop';
+      startBtn.classList.add('stop');
+      startBtn.disabled = false;
+      tareBtn.disabled = false;
+      requestAnimationFrame(loop);
+    } catch (e) {
+      showError('Zugriff auf den Bewegungssensor fehlgeschlagen: ' + e.message + '. Läuft diese Seite über HTTPS (z. B. GitHub Pages) und direkt in Safari (nicht im GitHub-App-Browser)?');
+      startBtn.disabled = false;
+      startBtn.textContent = 'Sensor aktivieren';
+    }
+  }
+
+  function stop() {
+    running = false;
+    window.removeEventListener('devicemotion', handleMotion, true);
+    if (wakeLock) { wakeLock.release().catch(function(){}); wakeLock = null; }
+    statusDot.className = 'dot';
+    statusText.textContent = 'Sensor gestoppt';
+    startBtn.textContent = 'Sensor aktivieren';
+    startBtn.classList.remove('stop');
+    tareBtn.disabled = true;
+  }
+
+  startBtn.addEventListener('click', function () {
+    if (running) { stop(); } else { start(); }
+  });
+
+  tareBtn.addEventListener('click', function () {
+    taring = true;
+    tareSamples = [];
+    tareBtn.textContent = 'Kalibriere…';
+  });
+
+  // ---------- sensor handling ----------
+  function handleMotion(event) {
+    var ax, ay, az;
+    var lin = event.acceleration;
+    if (lin && lin.x !== null && lin.x !== undefined) {
+      ax = lin.x; ay = lin.y; az = lin.z;
+    } else if (event.accelerationIncludingGravity) {
+      var g = event.accelerationIncludingGravity;
+      if (g.x === null || g.x === undefined) return;
+      var alpha = 0.85;
+      if (!gravityInit) { gravityEst.x = g.x; gravityEst.y = g.y; gravityEst.z = g.z; gravityInit = true; }
+      gravityEst.x = alpha * gravityEst.x + (1 - alpha) * g.x;
+      gravityEst.y = alpha * gravityEst.y + (1 - alpha) * g.y;
+      gravityEst.z = alpha * gravityEst.z + (1 - alpha) * g.z;
+      ax = g.x - gravityEst.x;
+      ay = g.y - gravityEst.y;
+      az = g.z - gravityEst.z;
+    } else {
+      return;
+    }
+
+    ax -= tareOffset.x; ay -= tareOffset.y; az -= tareOffset.z;
+
+    if (taring) {
+      tareSamples.push({ x: ax + tareOffset.x, y: ay + tareOffset.y, z: az + tareOffset.z });
+      if (tareSamples.length >= 40) {
+        var sx = 0, sy = 0, sz = 0;
+        tareSamples.forEach(function (s) { sx += s.x; sy += s.y; sz += s.z; });
+        tareOffset = { x: sx / tareSamples.length, y: sy / tareSamples.length, z: sz / tareSamples.length };
+        taring = false;
+        tareBtn.textContent = 'Nullpunkt gesetzt';
+        setTimeout(function () { tareBtn.textContent = 'Nullpunkt setzen'; }, 1200);
+      }
+    }
+
+    var t = performance.now();
+    var mag = Math.sqrt(ax * ax + ay * ay + az * az);
+    buffer.push({ t: t, ax: ax, ay: ay, az: az, mag: mag });
+    if (buffer.length > MAX_SAMPLES) buffer.shift();
+  }
+
+  // ---------- FFT (iterative radix-2, real input) ----------
+  function fft(re, im) {
+    var n = re.length;
+    for (var i = 1, j = 0; i < n; i++) {
+      var bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        var tr = re[i]; re[i] = re[j]; re[j] = tr;
+        var ti = im[i]; im[i] = im[j]; im[j] = ti;
+      }
+    }
+    for (var len = 2; len <= n; len <<= 1) {
+      var ang = -2 * Math.PI / len;
+      var wr = Math.cos(ang), wi = Math.sin(ang);
+      for (i = 0; i < n; i += len) {
+        var curWr = 1, curWi = 0;
+        for (j = 0; j < len / 2; j++) {
+          var ur = re[i + j], ui = im[i + j];
+          var vr = re[i + j + len / 2] * curWr - im[i + j + len / 2] * curWi;
+          var vi = re[i + j + len / 2] * curWi + im[i + j + len / 2] * curWr;
+          re[i + j] = ur + vr; im[i + j] = ui + vi;
+          re[i + j + len / 2] = ur - vr; im[i + j + len / 2] = ui - vi;
+          var nWr = curWr * wr - curWi * wi;
+          var nWi = curWr * wi + curWi * wr;
+          curWr = nWr; curWi = nWi;
+        }
+      }
+    }
+  }
+
+  // Runs one FFT per axis (signed values) and combines bins as RSS, rather
+  // than taking the FFT of the vector magnitude directly. A single-axis pure
+  // sine turns into a full-wave-rectified signal once you take |v| first,
+  // which doubles its apparent frequency in the spectrum - doing the FFT per
+  // axis first avoids that artifact and also isn't biased by phone orientation.
+  function computeSpectrum() {
+    if (buffer.length < FFT_SIZE) { lastSpectrum = null; return; }
+    var slice = buffer.slice(buffer.length - FFT_SIZE);
+    var n = slice.length;
+    var dtSum = 0, dtCount = 0;
+    for (var i = 1; i < slice.length; i++) {
+      var dt = slice[i].t - slice[i - 1].t;
+      if (dt > 0 && dt < 200) { dtSum += dt; dtCount++; }
+    }
+    if (dtCount === 0) { lastSpectrum = null; return; }
+    var sampleRate = 1000 / (dtSum / dtCount);
+    lastSampleRate = sampleRate;
+
+    var axes = ['ax', 'ay', 'az'];
+    var spectra = axes.map(function (key) {
+      var re = new Array(n), im = new Array(n);
+      for (var i = 0; i < n; i++) {
+        var w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1))); // Hann window
+        re[i] = slice[i][key] * w;
+        im[i] = 0;
+      }
+      fft(re, im);
+      return { re: re, im: im };
+    });
+
+    var bins = [];
+    var half = n / 2;
+    var peak = null;
+    for (i = 1; i < half; i++) { // skip DC (i=0)
+      var sumSq = 0;
+      for (var a = 0; a < spectra.length; a++) {
+        var re_i = spectra[a].re[i], im_i = spectra[a].im[i];
+        var m = Math.sqrt(re_i * re_i + im_i * im_i) / n;
+        sumSq += m * m;
+      }
+      var magnitude = Math.sqrt(sumSq);
+      var freq = i * sampleRate / n;
+      bins.push({ freq: freq, mag: magnitude });
+      if (freq >= 0.3 && (!peak || magnitude > peak.mag)) peak = { freq: freq, mag: magnitude };
+    }
+    lastSpectrum = { bins: bins, sampleRate: sampleRate, peak: peak };
+  }
+
+  // ---------- canvas setup ----------
+  function setupCanvas(canvas) {
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    var cssH = parseInt(canvas.getAttribute('height'), 10) || 160;
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx: ctx, w: rect.width, h: cssH };
+  }
+
+  var timeDims = setupCanvas(timeCanvas);
+  var freqDims = setupCanvas(freqCanvas);
+  window.addEventListener('resize', function () {
+    timeDims = setupCanvas(timeCanvas);
+    freqDims = setupCanvas(freqCanvas);
+  });
+
+  function drawGrid(ctx, w, h, padL, padB, padT) {
+    ctx.strokeStyle = css('--gridline');
+    ctx.lineWidth = 1;
+    var rows = 4;
+    for (var r = 0; r <= rows; r++) {
+      var y = padT + (h - padT - padB) * (r / rows);
+      ctx.beginPath();
+      ctx.moveTo(padL, Math.round(y) + 0.5);
+      ctx.lineTo(w, Math.round(y) + 0.5);
+      ctx.stroke();
+    }
+  }
+
+  function fmt(n, d) {
+    if (n === null || n === undefined || isNaN(n)) return '–';
+    return n.toFixed(d === undefined ? 1 : d);
+  }
+
+  // ---------- draw: time chart ----------
+  var timeHoverX = null;
+  function drawTimeChart() {
+    var ctx = timeDims.ctx, w = timeDims.w, h = timeDims.h;
+    var padL = 38, padB = 18, padT = 8;
+    ctx.clearRect(0, 0, w, h);
+
+    var now = buffer.length ? buffer[buffer.length - 1].t : performance.now();
+    var from = now - TIME_WINDOW_MS;
+    var pts = buffer.filter(function (s) { return s.t >= from; });
+
+    if (pts.length < 2) {
+      ctx.fillStyle = css('--text-muted');
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText('Warte auf Sensordaten…', padL, h / 2);
+      return;
+    }
+
+    // mag is a vector length (sqrt of squares), so it's never negative -
+    // scale the axis from 0 rather than wasting half the chart on a mirror.
+    var mgVals = pts.map(function (s) { return s.mag / G * 1000; });
+    var maxVal = Math.max.apply(null, mgVals);
+    var yMax = Math.max(maxVal * 1.2, 2); // minimum span floor: 2mg
+    var yMin = 0;
+
+    drawGrid(ctx, w, h, padL, padB, padT);
+
+    // axis labels
+    ctx.fillStyle = css('--text-muted');
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(yMax, 1), padL - 6, padT + 8);
+    ctx.fillText(fmt(yMax / 2, 1), padL - 6, padT + (h - padT - padB) / 2 + 3);
+    ctx.fillText('0', padL - 6, h - padB);
+    ctx.textAlign = 'left';
+
+    function xPos(t) { return padL + (t - from) / TIME_WINDOW_MS * (w - padL); }
+    function yPos(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * (h - padT - padB); }
+
+    // baseline
+    ctx.strokeStyle = css('--baseline');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    var zy = Math.round(yPos(0)) + 0.5;
+    ctx.moveTo(padL, zy); ctx.lineTo(w, zy); ctx.stroke();
+
+    // line
+    ctx.strokeStyle = css('--series-1');
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    pts.forEach(function (s, i) {
+      var x = xPos(s.t), y = yPos(s.mag / G * 1000);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // current point marker
+    var last = pts[pts.length - 1];
+    ctx.fillStyle = css('--series-1');
+    ctx.beginPath();
+    ctx.arc(xPos(last.t), yPos(last.mag / G * 1000), 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // hover crosshair
+    if (timeHoverX !== null) {
+      var hx = Math.max(padL, Math.min(w, timeHoverX));
+      var nearest = pts.reduce(function (best, s) {
+        var x = xPos(s.t);
+        return Math.abs(x - hx) < Math.abs(xPos(best.t) - hx) ? s : best;
+      }, pts[0]);
+      var nx = xPos(nearest.t), ny = yPos(nearest.mag / G * 1000);
+      ctx.strokeStyle = css('--text-muted');
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(nx + 0.5, padT); ctx.lineTo(nx + 0.5, h - padB); ctx.stroke();
+      ctx.fillStyle = css('--series-2');
+      ctx.beginPath(); ctx.arc(nx, ny, 4, 0, Math.PI * 2); ctx.fill();
+
+      var ago = ((now - nearest.t) / 1000).toFixed(2);
+      timeTooltip.textContent = fmt(nearest.mag / G * 1000, 2) + ' mg · vor ' + ago + ' s';
+      timeTooltip.style.left = nx + 'px';
+      timeTooltip.style.top = ny + 'px';
+      timeTooltip.classList.add('show');
+    } else {
+      timeTooltip.classList.remove('show');
+    }
+
+    // live stats
+    curValEl.textContent = fmt(last.mag / G * 1000, 2);
+    var ppMin = Math.min.apply(null, mgVals), ppMax = Math.max.apply(null, mgVals);
+    ppValEl.textContent = fmt(ppMax - ppMin, 2);
+  }
+
+  // ---------- draw: frequency chart ----------
+  var freqHoverX = null;
+  function drawFreqChart() {
+    var ctx = freqDims.ctx, w = freqDims.w, h = freqDims.h;
+    var padL = 38, padB = 18, padT = 8;
+    ctx.clearRect(0, 0, w, h);
+
+    if (!lastSpectrum || !lastSpectrum.bins.length) {
+      ctx.fillStyle = css('--text-muted');
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText('Sammle Daten für Spektrum…', padL, h / 2);
+      return;
+    }
+
+    var bins = lastSpectrum.bins;
+    var maxMag = Math.max.apply(null, bins.map(function (b) { return b.mag; }));
+    maxMag = Math.max(maxMag, 0.05);
+
+    drawGrid(ctx, w, h, padL, padB, padT);
+
+    ctx.fillStyle = css('--text-muted');
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(maxMag / G * 1000, 0), padL - 6, padT + 8);
+    ctx.fillText('0', padL - 6, h - padB);
+    ctx.textAlign = 'left';
+
+    var plotW = w - padL;
+    var barW = Math.max(1, plotW / bins.length - 1);
+    var peakFreq = lastSpectrum.peak ? lastSpectrum.peak.freq : null;
+
+    function xPos(idx) { return padL + (idx / bins.length) * plotW; }
+    function yPos(m) { return padT + (1 - m / maxMag) * (h - padT - padB); }
+
+    bins.forEach(function (b, i) {
+      var isPeak = peakFreq !== null && b.freq === peakFreq;
+      ctx.fillStyle = isPeak ? css('--series-2') : css('--series-1');
+      var x = xPos(i), y = yPos(b.mag);
+      ctx.fillRect(x, y, barW, (h - padB) - y);
+    });
+
+    // x-axis ticks (Hz)
+    ctx.fillStyle = css('--text-muted');
+    ctx.font = '10px system-ui, sans-serif';
+    var nyquist = lastSpectrum.sampleRate / 2;
+    [0, 0.25, 0.5, 0.75, 1].forEach(function (frac) {
+      var x = padL + frac * plotW;
+      ctx.fillText(fmt(nyquist * frac, 0), Math.min(x, w - 20), h - 4);
+    });
+
+    if (freqHoverX !== null) {
+      var idx = Math.max(0, Math.min(bins.length - 1, Math.round((freqHoverX - padL) / plotW * bins.length)));
+      var b = bins[idx];
+      if (b) {
+        var x = xPos(idx) + barW / 2;
+        freqTooltip.textContent = fmt(b.freq, 1) + ' Hz · ' + fmt(b.mag / G * 1000, 1) + ' mg';
+        freqTooltip.style.left = x + 'px';
+        freqTooltip.style.top = yPos(b.mag) + 'px';
+        freqTooltip.classList.add('show');
+      }
+    } else {
+      freqTooltip.classList.remove('show');
+    }
+
+    if (lastSpectrum.peak) {
+      freqValEl.textContent = fmt(lastSpectrum.peak.freq, 1);
+    }
+    rateValEl.textContent = fmt(lastSpectrum.sampleRate, 0);
+  }
+
+  // ---------- interaction ----------
+  function bindHover(canvas, setter) {
+    function onMove(e) {
+      var rect = canvas.getBoundingClientRect();
+      var clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      setter(clientX - rect.left);
+      e.preventDefault();
+    }
+    function onEnd() { setter(null); }
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onEnd);
+    canvas.addEventListener('touchstart', onMove, { passive: false });
+    canvas.addEventListener('touchmove', onMove, { passive: false });
+    canvas.addEventListener('touchend', onEnd);
+  }
+  bindHover(timeCanvas, function (x) { timeHoverX = x; });
+  bindHover(freqCanvas, function (x) { freqHoverX = x; });
+
+  // ---------- main loop ----------
+  var lastFftTime = 0;
+  function loop(ts) {
+    if (!running) return;
+    drawTimeChart();
+    if (ts - lastFftTime > 180) {
+      computeSpectrum();
+      lastFftTime = ts;
+    }
+    drawFreqChart();
+    requestAnimationFrame(loop);
+  }
+
+  // idle render so charts aren't blank before start
+  drawTimeChart();
+  drawFreqChart();
+})();
+</script>
+</body>
+</html>
