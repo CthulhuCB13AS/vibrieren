@@ -81,8 +81,10 @@
   button.action.primary { background: var(--series-2); border-color: var(--series-2); color: #fff; }
   button.action.primary.stop { background: var(--status-critical); border-color: var(--status-critical); }
   button.action.secondary { border-color: var(--series-2); color: var(--series-2); }
+  button.action.ghost { color: var(--text-secondary); }
   button.action:disabled { opacity: 0.4; }
   button.action:active { transform: scale(0.98); }
+  .btn-row button.action { font-size: 13px; padding: 11px 6px; }
 
   /* ---------- stats ---------- */
   .stats { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -137,6 +139,7 @@
     padding: 6px 8px 4px;
   }
   .chart-panel .chart-title { flex: 0 0 auto; font-size: 10.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 2px; }
+  .chart-panel .chart-title .unit { font-weight: 400; color: var(--text-muted); font-size: 9.5px; }
   .canvas-wrap { flex: 1 1 auto; min-height: 0; position: relative; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 
@@ -201,8 +204,9 @@
   <p id="errMsg" class="msg"></p>
 
   <div class="btn-row">
-    <button id="startBtn" class="action primary">Sensor aktivieren</button>
-    <button id="tareBtn" class="action secondary" disabled>Nullpunkt</button>
+    <button id="startBtn" class="action primary">Start</button>
+    <button id="tareBtn" class="action secondary" disabled>0-Punkt</button>
+    <button id="csvBtn" class="action ghost" disabled>CSV</button>
   </div>
 
   <div class="stats">
@@ -231,14 +235,14 @@
 
   <div class="charts-row">
     <div class="chart-panel">
-      <div class="chart-title">Zeitsignal</div>
+      <div class="chart-title">Zeitsignal <span class="unit">· mg über Zeit</span></div>
       <div class="canvas-wrap">
         <canvas id="timeChart"></canvas>
         <div id="timeTooltip" class="tooltip"></div>
       </div>
     </div>
     <div class="chart-panel">
-      <div class="chart-title">Spektrum</div>
+      <div class="chart-title">Spektrum <span class="unit">· mg über Hz</span></div>
       <div class="canvas-wrap">
         <canvas id="freqChart"></canvas>
         <div id="freqTooltip" class="tooltip"></div>
@@ -281,6 +285,7 @@
   var infoBtn = document.getElementById('infoBtn');
   var overlay = document.getElementById('overlay');
   var overlayClose = document.getElementById('overlayClose');
+  var csvBtn = document.getElementById('csvBtn');
 
   infoBtn.addEventListener('click', function () { overlay.classList.add('show'); });
   overlayClose.addEventListener('click', function () { overlay.classList.remove('show'); });
@@ -292,7 +297,9 @@
   var TIME_WINDOW_MS = 5000;
 
   var running = false;
-  var buffer = []; // {t, ax, ay, az, mag}
+  var buffer = []; // {t, ax, ay, az, mag} - rolling 5s window used for the live chart
+  var sessionLog = []; // {t, ax, ay, az, mag} - full log of the current/last measurement, for CSV export
+  var SESSION_LOG_MAX = 60000; // ~15min at 60Hz, generous cap so a forgotten-running tab can't grow unbounded
   var gravityEst = { x: 0, y: 0, z: 0 };
   var gravityInit = false;
   var tareOffset = { x: 0, y: 0, z: 0 };
@@ -300,10 +307,26 @@
   var tareSamples = [];
   var lastSpectrum = null; // {bins:[{freq,mag}], sampleRate, peak:{freq,mag}}
   var wakeLock = null;
+  var runId = 0; // bumped on every start()/stop() - lets a stale rAF chain from a
+                 // fast Stop->Start cycle recognize it's obsolete and self-terminate,
+                 // instead of running alongside the new chain and doubling draw/FFT work.
 
-  function css(name) {
-    return getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(name).trim();
-  }
+  // Read the theme's custom properties once and cache them as plain values.
+  // The draw loop runs at ~60fps; calling getComputedStyle() per fillStyle
+  // assignment (as an earlier version did) forces a style recalc on every
+  // single one, many times per frame, for colors that never actually change
+  // at runtime (the theme is permanently dark, see the CSS block above).
+  var COLORS = (function () {
+    var s = getComputedStyle(document.querySelector('.viz-root'));
+    function v(name) { return s.getPropertyValue(name).trim(); }
+    return {
+      gridline: v('--gridline'),
+      baseline: v('--baseline'),
+      textMuted: v('--text-muted'),
+      series1: v('--series-1'),
+      series2: v('--series-2')
+    };
+  })();
 
   // ---------- permission / start ----------
   function showError(msg) {
@@ -324,6 +347,17 @@
     } catch (e) { /* ignore - not critical */ }
   }
 
+  // iOS releases the wake lock whenever the tab is backgrounded (app switch,
+  // locked with the side button, etc). If the page becomes visible again
+  // while a measurement is still running - e.g. the user briefly checked
+  // something else during a 120s exposure - reacquire it so the screen
+  // doesn't sleep mid-measurement without them noticing.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && running && !wakeLock) {
+      requestWakeLock();
+    }
+  });
+
   async function start() {
     errMsg.classList.remove('show');
     if (!hasMotionSupport()) {
@@ -331,21 +365,25 @@
       return;
     }
     startBtn.disabled = true;
-    startBtn.textContent = 'Verbinde…';
+    startBtn.textContent = '…';
     try {
       if (typeof DeviceMotionEvent.requestPermission === 'function') {
         var res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') {
           showError('Zugriff auf Bewegungsdaten nicht erlaubt. Erlaube ihn über Einstellungen > Safari > Bewegung & Ausrichtung, oder lade die Seite neu und bestätige die Abfrage.');
           startBtn.disabled = false;
-          startBtn.textContent = 'Sensor aktivieren';
+          startBtn.textContent = 'Start';
           return;
         }
       }
       window.addEventListener('devicemotion', handleMotion, true);
       requestWakeLock();
       running = true;
+      runId++;
+      var myRun = runId;
       buffer = [];
+      sessionLog = [];
+      csvBtn.disabled = true;
       gravityInit = false;
       statusDot.className = 'dot live';
       statusText.textContent = 'aktiv – misst…';
@@ -353,21 +391,22 @@
       startBtn.classList.add('stop');
       startBtn.disabled = false;
       tareBtn.disabled = false;
-      requestAnimationFrame(loop);
+      requestAnimationFrame(function (ts) { loop(ts, myRun); });
     } catch (e) {
       showError('Zugriff auf den Bewegungssensor fehlgeschlagen: ' + e.message + '. Läuft die Seite über HTTPS (z. B. GitHub Pages) und direkt in Safari (nicht im GitHub-App-Browser)?');
       startBtn.disabled = false;
-      startBtn.textContent = 'Sensor aktivieren';
+      startBtn.textContent = 'Start';
     }
   }
 
   function stop() {
     running = false;
+    runId++;
     window.removeEventListener('devicemotion', handleMotion, true);
     if (wakeLock) { wakeLock.release().catch(function(){}); wakeLock = null; }
     statusDot.className = 'dot';
     statusText.textContent = 'gestoppt';
-    startBtn.textContent = 'Sensor aktivieren';
+    startBtn.textContent = 'Start';
     startBtn.classList.remove('stop');
     tareBtn.disabled = true;
   }
@@ -380,6 +419,64 @@
     taring = true;
     tareSamples = [];
     tareBtn.textContent = 'Kalibriere…';
+  });
+
+  // ---------- CSV export / share ----------
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function buildCsv() {
+    var now = new Date();
+    var stamp = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + '_' +
+      pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+    var lines = [];
+    lines.push('# Vibrationsmesser - Export ' + now.toISOString());
+    if (lastSpectrum) lines.push('# Zuletzt gemessene Abtastrate (Hz),' + lastSpectrum.sampleRate.toFixed(1));
+    if (lastSpectrum && lastSpectrum.peak) lines.push('# Dominante Frequenz (Hz),' + lastSpectrum.peak.freq.toFixed(2));
+    lines.push('');
+    lines.push('# Zeitsignal (kompletter Messlauf)');
+    lines.push('t_s,ax_mps2,ay_mps2,az_mps2,mag_mg');
+    var t0 = sessionLog.length ? sessionLog[0].t : 0;
+    sessionLog.forEach(function (s) {
+      lines.push(
+        ((s.t - t0) / 1000).toFixed(4) + ',' +
+        s.ax.toFixed(5) + ',' + s.ay.toFixed(5) + ',' + s.az.toFixed(5) + ',' +
+        (s.mag / G * 1000).toFixed(3)
+      );
+    });
+    if (lastSpectrum && lastSpectrum.bins.length) {
+      lines.push('');
+      lines.push('# Frequenzspektrum (letzte Berechnung waehrend des Laufs)');
+      lines.push('freq_hz,mag_mg');
+      lastSpectrum.bins.forEach(function (b) {
+        lines.push(b.freq.toFixed(3) + ',' + (b.mag / G * 1000).toFixed(4));
+      });
+    }
+    return { text: lines.join('\n'), filename: 'vibrationsmesser_' + stamp + '.csv' };
+  }
+
+  csvBtn.addEventListener('click', async function () {
+    if (!sessionLog.length) return;
+    var out = buildCsv();
+    var blob = new Blob([out.text], { type: 'text/csv' });
+
+    if (navigator.canShare) {
+      try {
+        var file = new File([blob], out.filename, { type: 'text/csv' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: out.filename });
+          return;
+        }
+      } catch (e) { /* user cancelled the share sheet, or share failed - fall through to download */ }
+    }
+
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = out.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
   });
 
   // ---------- sensor handling ----------
@@ -413,14 +510,20 @@
         tareOffset = { x: sx / tareSamples.length, y: sy / tareSamples.length, z: sz / tareSamples.length };
         taring = false;
         tareBtn.textContent = 'Gesetzt';
-        setTimeout(function () { tareBtn.textContent = 'Nullpunkt'; }, 1200);
+        setTimeout(function () { tareBtn.textContent = '0-Punkt'; }, 1200);
       }
     }
 
     var t = performance.now();
     var mag = Math.sqrt(ax * ax + ay * ay + az * az);
-    buffer.push({ t: t, ax: ax, ay: ay, az: az, mag: mag });
+    var sample = { t: t, ax: ax, ay: ay, az: az, mag: mag };
+    buffer.push(sample);
     if (buffer.length > MAX_SAMPLES) buffer.shift();
+
+    if (sessionLog.length < SESSION_LOG_MAX) {
+      sessionLog.push(sample);
+      if (csvBtn.disabled) csvBtn.disabled = false;
+    }
   }
 
   // ---------- FFT (iterative radix-2, real input) ----------
@@ -525,7 +628,7 @@
   });
 
   function drawGrid(ctx, w, h, padL, padB, padT) {
-    ctx.strokeStyle = css('--gridline');
+    ctx.strokeStyle = COLORS.gridline;
     ctx.lineWidth = 1;
     var rows = 3;
     for (var r = 0; r <= rows; r++) {
@@ -555,7 +658,7 @@
     var pts = buffer.filter(function (s) { return s.t >= from; });
 
     if (pts.length < 2) {
-      ctx.fillStyle = css('--text-muted');
+      ctx.fillStyle = COLORS.textMuted;
       ctx.font = '11px system-ui, sans-serif';
       ctx.fillText('warte…', padL, h / 2);
       return;
@@ -570,23 +673,25 @@
 
     drawGrid(ctx, w, h, padL, padB, padT);
 
-    ctx.fillStyle = css('--text-muted');
+    ctx.fillStyle = COLORS.textMuted;
     ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(fmt(yMax, 1), padL - 4, padT + 7);
     ctx.fillText('0', padL - 4, h - padB);
+    ctx.fillText('jetzt', w, h - 2);
     ctx.textAlign = 'left';
+    ctx.fillText('-5s', padL, h - 2);
 
     function xPos(t) { return padL + (t - from) / TIME_WINDOW_MS * (w - padL); }
     function yPos(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * (h - padT - padB); }
 
-    ctx.strokeStyle = css('--baseline');
+    ctx.strokeStyle = COLORS.baseline;
     ctx.lineWidth = 1;
     ctx.beginPath();
     var zy = Math.round(yPos(0)) + 0.5;
     ctx.moveTo(padL, zy); ctx.lineTo(w, zy); ctx.stroke();
 
-    ctx.strokeStyle = css('--series-1');
+    ctx.strokeStyle = COLORS.series1;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -597,7 +702,7 @@
     ctx.stroke();
 
     var last = pts[pts.length - 1];
-    ctx.fillStyle = css('--series-1');
+    ctx.fillStyle = COLORS.series1;
     ctx.beginPath();
     ctx.arc(xPos(last.t), yPos(last.mag / G * 1000), 3.5, 0, Math.PI * 2);
     ctx.fill();
@@ -609,10 +714,10 @@
         return Math.abs(x - hx) < Math.abs(xPos(best.t) - hx) ? s : best;
       }, pts[0]);
       var nx = xPos(nearest.t), ny = yPos(nearest.mag / G * 1000);
-      ctx.strokeStyle = css('--text-muted');
+      ctx.strokeStyle = COLORS.textMuted;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(nx + 0.5, padT); ctx.lineTo(nx + 0.5, h - padB); ctx.stroke();
-      ctx.fillStyle = css('--series-2');
+      ctx.fillStyle = COLORS.series2;
       ctx.beginPath(); ctx.arc(nx, ny, 3.5, 0, Math.PI * 2); ctx.fill();
 
       var ago = ((now - nearest.t) / 1000).toFixed(2);
@@ -638,22 +743,26 @@
     ctx.clearRect(0, 0, w, h);
 
     if (!lastSpectrum || !lastSpectrum.bins.length) {
-      ctx.fillStyle = css('--text-muted');
+      ctx.fillStyle = COLORS.textMuted;
       ctx.font = '11px system-ui, sans-serif';
       ctx.fillText('sammle…', padL, h / 2);
       return;
     }
 
+    // Floor is just an epsilon against divide-by-zero - deliberately tiny
+    // (~0.03mg) so a genuinely quiet signal (e.g. a small, well-balanced fan
+    // whose real spectral content is a fraction of a mg) still gets scaled up
+    // to fill the chart, instead of being flattened against a fixed floor.
     var bins = lastSpectrum.bins;
     var maxMag = Math.max.apply(null, bins.map(function (b) { return b.mag; }));
-    maxMag = Math.max(maxMag, 0.05);
+    maxMag = Math.max(maxMag * 1.15, 0.0003);
 
     drawGrid(ctx, w, h, padL, padB, padT);
 
-    ctx.fillStyle = css('--text-muted');
+    ctx.fillStyle = COLORS.textMuted;
     ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(fmt(maxMag / G * 1000, 0), padL - 4, padT + 7);
+    ctx.fillText(fmt(maxMag / G * 1000, maxMag / G * 1000 < 1 ? 2 : 0), padL - 4, padT + 7);
     ctx.fillText('0', padL - 4, h - padB);
     ctx.textAlign = 'left';
 
@@ -666,18 +775,21 @@
 
     bins.forEach(function (b, i) {
       var isPeak = peakFreq !== null && b.freq === peakFreq;
-      ctx.fillStyle = isPeak ? css('--series-2') : css('--series-1');
+      ctx.fillStyle = isPeak ? COLORS.series2 : COLORS.series1;
       var x = xPos(i), y = yPos(b.mag);
       ctx.fillRect(x, y, barW, (h - padB) - y);
     });
 
-    ctx.fillStyle = css('--text-muted');
+    ctx.fillStyle = COLORS.textMuted;
     ctx.font = '9px system-ui, sans-serif';
     var nyquist = lastSpectrum.sampleRate / 2;
-    [0, 0.5, 1].forEach(function (frac) {
+    [0, 0.5, 1].forEach(function (frac, idx) {
       var x = padL + frac * plotW;
-      ctx.fillText(fmt(nyquist * frac, 0), Math.min(x, w - 16), h - 2);
+      var label = fmt(nyquist * frac, 0) + (idx === 2 ? ' Hz' : '');
+      ctx.textAlign = idx === 2 ? 'right' : 'left';
+      ctx.fillText(label, idx === 2 ? w : Math.max(x, padL), h - 2);
     });
+    ctx.textAlign = 'left';
 
     if (freqHoverX !== null) {
       var idx = Math.max(0, Math.min(bins.length - 1, Math.round((freqHoverX - padL) / plotW * bins.length)));
@@ -719,15 +831,15 @@
 
   // ---------- main loop ----------
   var lastFftTime = 0;
-  function loop(ts) {
-    if (!running) return;
+  function loop(ts, myRun) {
+    if (!running || myRun !== runId) return; // stale chain from a prior start() - stop here
     drawTimeChart();
     if (ts - lastFftTime > 180) {
       computeSpectrum();
       lastFftTime = ts;
     }
     drawFreqChart();
-    requestAnimationFrame(loop);
+    requestAnimationFrame(function (ts2) { loop(ts2, myRun); });
   }
 
   // idle render so charts aren't blank before start
