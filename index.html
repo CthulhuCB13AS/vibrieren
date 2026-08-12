@@ -19,8 +19,8 @@
     --gridline:       #2c2c2a;
     --baseline:       #383835;
     --border:         rgba(255,255,255,0.10);
-    --series-1:       #3987e5; /* blue: Zeitsignal */
-    --series-2:       #d95926; /* orange: Peak-Markierung */
+    --series-1:       #3987e5; /* blue: Zeitsignal / Spektrum-Grundfarbe */
+    --series-2:       #CC5500; /* orange: Auflage-Markierung, Buttons, Spektrum-Peak */
     --series-3:       #199e70; /* aqua: Statuspunkt "aktiv" */
     --status-critical:#e66767;
   }
@@ -28,112 +28,181 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
     margin: 0; padding: 0;
-    background: #0d0d0d; /* matches --page; set directly so it applies before/outside .viz-root, e.g. on iOS overscroll */
+    height: 100%;
+    overflow: hidden; /* the app is designed to fit one screen - nothing to scroll */
+    background: #0d0d0d;
     color: #ffffff;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+
   .viz-root {
     background: var(--page);
-    min-height: 100vh;
-    padding: env(safe-area-inset-top, 16px) 14px calc(env(safe-area-inset-bottom, 16px) + 24px);
-  }
-  header { padding: 6px 2px 14px; }
-  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  .sub { font-size: 13px; color: var(--text-secondary); line-height: 1.45; margin: 0; }
-
-  .panel {
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 14px;
-    margin-bottom: 12px;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: max(env(safe-area-inset-top), 10px) max(env(safe-area-inset-right), 12px) max(env(safe-area-inset-bottom), 10px) max(env(safe-area-inset-left), 12px);
+    gap: 8px;
   }
 
-  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--text-secondary); }
+  /* ---------- top bar ---------- */
+  .topbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .topbar .title-group { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .topbar h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
+  .topbar .status-text { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--baseline); flex: none; }
   .dot.live { background: var(--series-3); box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-3) 25%, transparent); }
   .dot.err { background: var(--status-critical); }
 
-  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
-  button {
-    font: inherit; font-size: 15px; font-weight: 600;
-    border: 1px solid var(--border);
+  .icon-btn {
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    font: 700 13px/1 system-ui, sans-serif; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+  }
+
+  .msg { flex: 0 0 auto; font-size: 12px; color: var(--status-critical); line-height: 1.35; display: none; }
+  .msg.show { display: block; }
+
+  /* ---------- controls ---------- */
+  .btn-row { flex: 0 0 auto; display: flex; gap: 8px; }
+  button.action {
+    font: inherit; font-size: 14px; font-weight: 700;
+    border: 1.5px solid var(--border);
     background: var(--surface-1);
     color: var(--text-primary);
     border-radius: 10px;
-    padding: 12px 16px;
+    padding: 11px 10px;
     flex: 1 1 auto;
-    min-width: 120px;
+    min-width: 0;
     cursor: pointer;
   }
-  button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
-  button.primary.stop { background: var(--status-critical); border-color: var(--status-critical); }
-  button:disabled { opacity: 0.45; }
-  button:active { transform: scale(0.98); }
+  button.action.primary { background: var(--series-2); border-color: var(--series-2); color: #fff; }
+  button.action.primary.stop { background: var(--status-critical); border-color: var(--status-critical); }
+  button.action.secondary { border-color: var(--series-2); color: var(--series-2); }
+  button.action:disabled { opacity: 0.4; }
+  button.action:active { transform: scale(0.98); }
 
-  .msg { font-size: 13px; color: var(--status-critical); margin-top: 10px; line-height: 1.4; display: none; }
-  .msg.show { display: block; }
-
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-    margin-bottom: 12px;
-  }
+  /* ---------- stats ---------- */
+  .stats { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .stat {
     background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 12px 14px;
+    border-radius: 10px;
+    padding: 6px 6px;
+    min-width: 0;
   }
-  .stat .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-  .stat .value { font-size: 24px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .stat .unit { font-size: 13px; color: var(--text-secondary); font-weight: 400; margin-left: 2px; }
+  .stat .label { font-size: 8.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .value { font-size: 16px; font-weight: 700; margin-top: 1px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .unit { font-size: 10px; color: var(--text-secondary); font-weight: 400; margin-left: 1px; }
 
-  .chart-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
-  .chart-caption { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
-  canvas { display: block; width: 100%; touch-action: none; }
+  /* ---------- placement marker (center) ---------- */
+  .marker-zone {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .marker-ring {
+    width: min(48vw, 40dvh, 220px);
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    border: 7px solid var(--series-2);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-2) 18%, transparent);
+    position: relative;
+    flex: none;
+  }
+  .marker-ring::before, .marker-ring::after {
+    content: ""; position: absolute; background: color-mix(in srgb, var(--series-2) 55%, transparent);
+  }
+  .marker-ring::before { top: 50%; left: 14%; right: 14%; height: 1.5px; transform: translateY(-50%); }
+  .marker-ring::after { left: 50%; top: 14%; bottom: 14%; width: 1.5px; transform: translateX(-50%); }
+  .marker-label { font-size: 12px; color: var(--text-secondary); text-align: center; max-width: 240px; }
+  .marker-label b { color: var(--series-2); }
+
+  /* ---------- charts (bottom) ---------- */
+  .charts-row { flex: 0 0 auto; height: 21dvh; min-height: 108px; max-height: 190px; display: flex; gap: 8px; }
+  .chart-panel {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 6px 8px 4px;
+  }
+  .chart-panel .chart-title { flex: 0 0 auto; font-size: 10.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 2px; }
+  .canvas-wrap { flex: 1 1 auto; min-height: 0; position: relative; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
 
   .tooltip {
     position: absolute;
     background: var(--text-primary);
     color: var(--surface-1);
-    font-size: 12px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
-    padding: 5px 8px;
+    padding: 4px 7px;
     border-radius: 6px;
     pointer-events: none;
     white-space: nowrap;
     transform: translate(-50%, -110%);
     opacity: 0;
     transition: opacity 0.1s;
+    z-index: 2;
   }
   .tooltip.show { opacity: 1; }
-  .chart-wrap { position: relative; }
 
-  details { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-  summary { cursor: pointer; font-weight: 600; color: var(--text-primary); padding: 4px 0; }
-  footer { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 18px; }
+  /* ---------- info overlay ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .overlay.show { display: flex; }
+  .overlay-panel {
+    width: 100%;
+    max-height: 82dvh;
+    overflow-y: auto;
+    background: var(--surface-1);
+    border-radius: 16px 16px 0 0;
+    padding: 16px 18px calc(env(safe-area-inset-bottom, 14px) + 16px);
+    border: 1px solid var(--border);
+    border-bottom: none;
+  }
+  .overlay-panel h2 { font-size: 15px; margin: 0 0 10px; }
+  .overlay-panel p { font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin: 0 0 10px; }
+  .overlay-close {
+    display: block; width: 100%; margin-top: 4px;
+    font: inherit; font-size: 14px; font-weight: 700;
+    border: 1px solid var(--border); background: transparent; color: var(--text-primary);
+    border-radius: 10px; padding: 10px; cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <div class="viz-root">
-  <header>
-    <h1>Vibrationsmesser</h1>
-    <p class="sub">Nutzt den Beschleunigungssensor deines Handys, um kleine Vibrationen live als Zeitsignal und Frequenzspektrum darzustellen.</p>
-  </header>
 
-  <div class="panel">
-    <div class="status-row">
+  <div class="topbar">
+    <div class="title-group">
       <span id="statusDot" class="dot"></span>
-      <span id="statusText">Sensor nicht aktiv</span>
+      <h1>Vibrationsmesser</h1>
+      <span id="statusText" class="status-text">nicht aktiv</span>
     </div>
-    <div class="btn-row">
-      <button id="startBtn" class="primary">Sensor aktivieren</button>
-      <button id="tareBtn" disabled>Nullpunkt setzen</button>
-    </div>
-    <p id="errMsg" class="msg"></p>
+    <button id="infoBtn" class="icon-btn" aria-label="Hinweise anzeigen">i</button>
+  </div>
+
+  <p id="errMsg" class="msg"></p>
+
+  <div class="btn-row">
+    <button id="startBtn" class="action primary">Sensor aktivieren</button>
+    <button id="tareBtn" class="action secondary" disabled>Nullpunkt</button>
   </div>
 
   <div class="stats">
@@ -142,11 +211,11 @@
       <div class="value"><span id="curVal">–</span><span class="unit">mg</span></div>
     </div>
     <div class="stat">
-      <div class="label">Spitze-Spitze (3 s)</div>
+      <div class="label">Spitze-Spitze</div>
       <div class="value"><span id="ppVal">–</span><span class="unit">mg</span></div>
     </div>
     <div class="stat">
-      <div class="label">Dominante Frequenz</div>
+      <div class="label">Frequenz</div>
       <div class="value"><span id="freqVal">–</span><span class="unit">Hz</span></div>
     </div>
     <div class="stat">
@@ -155,35 +224,40 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="chart-title">Beschleunigung über Zeit</div>
-    <div class="chart-caption">letzte 5 Sekunden, Achse skaliert automatisch auf den aktuellen Ausschlag</div>
-    <div class="chart-wrap">
-      <canvas id="timeChart" height="160"></canvas>
-      <div id="timeTooltip" class="tooltip"></div>
+  <div class="marker-zone">
+    <div class="marker-ring"></div>
+    <div class="marker-label">Lüfter/Objekt <b>mittig auf diese Markierung</b> ausrichten und fest ankoppeln</div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-panel">
+      <div class="chart-title">Zeitsignal</div>
+      <div class="canvas-wrap">
+        <canvas id="timeChart"></canvas>
+        <div id="timeTooltip" class="tooltip"></div>
+      </div>
+    </div>
+    <div class="chart-panel">
+      <div class="chart-title">Spektrum</div>
+      <div class="canvas-wrap">
+        <canvas id="freqChart"></canvas>
+        <div id="freqTooltip" class="tooltip"></div>
+      </div>
     </div>
   </div>
 
-  <div class="panel">
-    <div class="chart-title">Frequenzspektrum</div>
-    <div class="chart-caption">0 Hz bis halbe Abtastrate, orange = stärkste Frequenz</div>
-    <div class="chart-wrap">
-      <canvas id="freqChart" height="160"></canvas>
-      <div id="freqTooltip" class="tooltip"></div>
-    </div>
-  </div>
+</div>
 
-  <div class="panel">
-    <details>
-      <summary>Hinweise & Grenzen</summary>
-      <p>Das Telefon muss möglichst fest mit der vibrierenden Oberfläche gekoppelt sein (z. B. angeklebt oder mit Klebeband fixiert) – lose aufgelegt werden feine Vibrationen gedämpft.</p>
-      <p>Die maximal erkennbare Frequenz ist durch die Abtastrate begrenzt (Nyquist = Abtastrate ÷ 2). Bei rund 60 Hz Abtastrate sind das etwa 30 Hz – höherfrequente Anteile (z. B. Motorharmonische) werden nicht erfasst.</p>
-      <p>Consumer-Beschleunigungssensoren haben ein Eigenrauschen im Bereich weniger Milli-g. Sehr kleine, aber reale Vibrationen können daher im Sensorrauschen untergehen; die automatische Skalierung macht das Rauschen selbst sichtbar, das ist normal.</p>
-      <p>iOS verlangt eine explizite Freigabe für Bewegungsdaten und funktioniert nur über HTTPS (z. B. GitHub Pages) – nicht über eine im GitHub-App-Browser geöffnete Seite, sondern direkt in Safari.</p>
-    </details>
+<div id="overlay" class="overlay">
+  <div class="overlay-panel">
+    <h2>Hinweise & Grenzen</h2>
+    <p>Nutzt den Beschleunigungssensor deines Handys, um kleine Vibrationen live als Zeitsignal und Frequenzspektrum darzustellen. Läuft vollständig lokal im Browser – es werden keine Daten übertragen oder gespeichert.</p>
+    <p>Das Telefon muss möglichst fest mit der vibrierenden Oberfläche gekoppelt sein (z. B. angeklebt oder mit Klebeband fixiert) – lose aufgelegt werden feine Vibrationen gedämpft. Die Rückseite flach auf die Markierung legen, nicht auf einer Kante.</p>
+    <p>Die maximal erkennbare Frequenz ist durch die Abtastrate begrenzt (Nyquist = Abtastrate ÷ 2). Bei rund 60 Hz Abtastrate sind das etwa 30 Hz – höherfrequente Anteile (z. B. Motorharmonische) werden nicht erfasst.</p>
+    <p>Consumer-Beschleunigungssensoren haben ein Eigenrauschen im Bereich weniger Milli-g. Sehr kleine, aber reale Vibrationen können daher im Sensorrauschen untergehen; die automatische Skalierung macht das Rauschen selbst sichtbar, das ist normal.</p>
+    <p>iOS verlangt eine explizite Freigabe für Bewegungsdaten und funktioniert nur über HTTPS (z. B. GitHub Pages) – nicht über eine im GitHub-App-Browser geöffnete Seite, sondern direkt in Safari.</p>
+    <button id="overlayClose" class="overlay-close">Schließen</button>
   </div>
-
-  <footer>Läuft vollständig lokal im Browser – es werden keine Daten übertragen oder gespeichert.</footer>
 </div>
 
 <script>
@@ -204,6 +278,13 @@
   var freqCanvas = document.getElementById('freqChart');
   var timeTooltip = document.getElementById('timeTooltip');
   var freqTooltip = document.getElementById('freqTooltip');
+  var infoBtn = document.getElementById('infoBtn');
+  var overlay = document.getElementById('overlay');
+  var overlayClose = document.getElementById('overlayClose');
+
+  infoBtn.addEventListener('click', function () { overlay.classList.add('show'); });
+  overlayClose.addEventListener('click', function () { overlay.classList.remove('show'); });
+  overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('show'); });
 
   var G = 9.80665;
   var FFT_SIZE = 256;
@@ -218,7 +299,6 @@
   var taring = false;
   var tareSamples = [];
   var lastSpectrum = null; // {bins:[{freq,mag}], sampleRate, peak:{freq,mag}}
-  var lastSampleRate = 0;
   var wakeLock = null;
 
   function css(name) {
@@ -256,7 +336,7 @@
       if (typeof DeviceMotionEvent.requestPermission === 'function') {
         var res = await DeviceMotionEvent.requestPermission();
         if (res !== 'granted') {
-          showError('Zugriff auf Bewegungsdaten wurde nicht erlaubt. Erlaube den Zugriff über Einstellungen > Safari > Bewegung & Ausrichtung, oder lade die Seite neu und bestätige die Abfrage.');
+          showError('Zugriff auf Bewegungsdaten nicht erlaubt. Erlaube ihn über Einstellungen > Safari > Bewegung & Ausrichtung, oder lade die Seite neu und bestätige die Abfrage.');
           startBtn.disabled = false;
           startBtn.textContent = 'Sensor aktivieren';
           return;
@@ -268,14 +348,14 @@
       buffer = [];
       gravityInit = false;
       statusDot.className = 'dot live';
-      statusText.textContent = 'Sensor aktiv – misst…';
+      statusText.textContent = 'aktiv – misst…';
       startBtn.textContent = 'Stop';
       startBtn.classList.add('stop');
       startBtn.disabled = false;
       tareBtn.disabled = false;
       requestAnimationFrame(loop);
     } catch (e) {
-      showError('Zugriff auf den Bewegungssensor fehlgeschlagen: ' + e.message + '. Läuft diese Seite über HTTPS (z. B. GitHub Pages) und direkt in Safari (nicht im GitHub-App-Browser)?');
+      showError('Zugriff auf den Bewegungssensor fehlgeschlagen: ' + e.message + '. Läuft die Seite über HTTPS (z. B. GitHub Pages) und direkt in Safari (nicht im GitHub-App-Browser)?');
       startBtn.disabled = false;
       startBtn.textContent = 'Sensor aktivieren';
     }
@@ -286,7 +366,7 @@
     window.removeEventListener('devicemotion', handleMotion, true);
     if (wakeLock) { wakeLock.release().catch(function(){}); wakeLock = null; }
     statusDot.className = 'dot';
-    statusText.textContent = 'Sensor gestoppt';
+    statusText.textContent = 'gestoppt';
     startBtn.textContent = 'Sensor aktivieren';
     startBtn.classList.remove('stop');
     tareBtn.disabled = true;
@@ -332,8 +412,8 @@
         tareSamples.forEach(function (s) { sx += s.x; sy += s.y; sz += s.z; });
         tareOffset = { x: sx / tareSamples.length, y: sy / tareSamples.length, z: sz / tareSamples.length };
         taring = false;
-        tareBtn.textContent = 'Nullpunkt gesetzt';
-        setTimeout(function () { tareBtn.textContent = 'Nullpunkt setzen'; }, 1200);
+        tareBtn.textContent = 'Gesetzt';
+        setTimeout(function () { tareBtn.textContent = 'Nullpunkt'; }, 1200);
       }
     }
 
@@ -390,7 +470,6 @@
     }
     if (dtCount === 0) { lastSpectrum = null; return; }
     var sampleRate = 1000 / (dtSum / dtCount);
-    lastSampleRate = sampleRate;
 
     var axes = ['ax', 'ay', 'az'];
     var spectra = axes.map(function (key) {
@@ -426,13 +505,11 @@
   function setupCanvas(canvas) {
     var dpr = window.devicePixelRatio || 1;
     var rect = canvas.getBoundingClientRect();
-    var cssH = parseInt(canvas.getAttribute('height'), 10) || 160;
-    canvas.style.height = cssH + 'px';
     canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(cssH * dpr);
+    canvas.height = Math.round(rect.height * dpr);
     var ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { ctx: ctx, w: rect.width, h: cssH };
+    return { ctx: ctx, w: rect.width, h: rect.height };
   }
 
   var timeDims = setupCanvas(timeCanvas);
@@ -441,11 +518,16 @@
     timeDims = setupCanvas(timeCanvas);
     freqDims = setupCanvas(freqCanvas);
   });
+  // orientation/layout can settle a frame late on iOS - resync once after load
+  window.addEventListener('load', function () {
+    timeDims = setupCanvas(timeCanvas);
+    freqDims = setupCanvas(freqCanvas);
+  });
 
   function drawGrid(ctx, w, h, padL, padB, padT) {
     ctx.strokeStyle = css('--gridline');
     ctx.lineWidth = 1;
-    var rows = 4;
+    var rows = 3;
     for (var r = 0; r <= rows; r++) {
       var y = padT + (h - padT - padB) * (r / rows);
       ctx.beginPath();
@@ -464,7 +546,8 @@
   var timeHoverX = null;
   function drawTimeChart() {
     var ctx = timeDims.ctx, w = timeDims.w, h = timeDims.h;
-    var padL = 38, padB = 18, padT = 8;
+    if (!w || !h) return;
+    var padL = 26, padB = 13, padT = 6;
     ctx.clearRect(0, 0, w, h);
 
     var now = buffer.length ? buffer[buffer.length - 1].t : performance.now();
@@ -473,8 +556,8 @@
 
     if (pts.length < 2) {
       ctx.fillStyle = css('--text-muted');
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillText('Warte auf Sensordaten…', padL, h / 2);
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('warte…', padL, h / 2);
       return;
     }
 
@@ -487,26 +570,22 @@
 
     drawGrid(ctx, w, h, padL, padB, padT);
 
-    // axis labels
     ctx.fillStyle = css('--text-muted');
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(fmt(yMax, 1), padL - 6, padT + 8);
-    ctx.fillText(fmt(yMax / 2, 1), padL - 6, padT + (h - padT - padB) / 2 + 3);
-    ctx.fillText('0', padL - 6, h - padB);
+    ctx.fillText(fmt(yMax, 1), padL - 4, padT + 7);
+    ctx.fillText('0', padL - 4, h - padB);
     ctx.textAlign = 'left';
 
     function xPos(t) { return padL + (t - from) / TIME_WINDOW_MS * (w - padL); }
     function yPos(v) { return padT + (1 - (v - yMin) / (yMax - yMin)) * (h - padT - padB); }
 
-    // baseline
     ctx.strokeStyle = css('--baseline');
     ctx.lineWidth = 1;
     ctx.beginPath();
     var zy = Math.round(yPos(0)) + 0.5;
     ctx.moveTo(padL, zy); ctx.lineTo(w, zy); ctx.stroke();
 
-    // line
     ctx.strokeStyle = css('--series-1');
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
@@ -517,14 +596,12 @@
     });
     ctx.stroke();
 
-    // current point marker
     var last = pts[pts.length - 1];
     ctx.fillStyle = css('--series-1');
     ctx.beginPath();
-    ctx.arc(xPos(last.t), yPos(last.mag / G * 1000), 4, 0, Math.PI * 2);
+    ctx.arc(xPos(last.t), yPos(last.mag / G * 1000), 3.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // hover crosshair
     if (timeHoverX !== null) {
       var hx = Math.max(padL, Math.min(w, timeHoverX));
       var nearest = pts.reduce(function (best, s) {
@@ -536,10 +613,10 @@
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(nx + 0.5, padT); ctx.lineTo(nx + 0.5, h - padB); ctx.stroke();
       ctx.fillStyle = css('--series-2');
-      ctx.beginPath(); ctx.arc(nx, ny, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(nx, ny, 3.5, 0, Math.PI * 2); ctx.fill();
 
       var ago = ((now - nearest.t) / 1000).toFixed(2);
-      timeTooltip.textContent = fmt(nearest.mag / G * 1000, 2) + ' mg · vor ' + ago + ' s';
+      timeTooltip.textContent = fmt(nearest.mag / G * 1000, 2) + ' mg · -' + ago + 's';
       timeTooltip.style.left = nx + 'px';
       timeTooltip.style.top = ny + 'px';
       timeTooltip.classList.add('show');
@@ -547,7 +624,6 @@
       timeTooltip.classList.remove('show');
     }
 
-    // live stats
     curValEl.textContent = fmt(last.mag / G * 1000, 2);
     var ppMin = Math.min.apply(null, mgVals), ppMax = Math.max.apply(null, mgVals);
     ppValEl.textContent = fmt(ppMax - ppMin, 2);
@@ -557,13 +633,14 @@
   var freqHoverX = null;
   function drawFreqChart() {
     var ctx = freqDims.ctx, w = freqDims.w, h = freqDims.h;
-    var padL = 38, padB = 18, padT = 8;
+    if (!w || !h) return;
+    var padL = 26, padB = 13, padT = 6;
     ctx.clearRect(0, 0, w, h);
 
     if (!lastSpectrum || !lastSpectrum.bins.length) {
       ctx.fillStyle = css('--text-muted');
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.fillText('Sammle Daten für Spektrum…', padL, h / 2);
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('sammle…', padL, h / 2);
       return;
     }
 
@@ -574,10 +651,10 @@
     drawGrid(ctx, w, h, padL, padB, padT);
 
     ctx.fillStyle = css('--text-muted');
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(fmt(maxMag / G * 1000, 0), padL - 6, padT + 8);
-    ctx.fillText('0', padL - 6, h - padB);
+    ctx.fillText(fmt(maxMag / G * 1000, 0), padL - 4, padT + 7);
+    ctx.fillText('0', padL - 4, h - padB);
     ctx.textAlign = 'left';
 
     var plotW = w - padL;
@@ -594,13 +671,12 @@
       ctx.fillRect(x, y, barW, (h - padB) - y);
     });
 
-    // x-axis ticks (Hz)
     ctx.fillStyle = css('--text-muted');
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '9px system-ui, sans-serif';
     var nyquist = lastSpectrum.sampleRate / 2;
-    [0, 0.25, 0.5, 0.75, 1].forEach(function (frac) {
+    [0, 0.5, 1].forEach(function (frac) {
       var x = padL + frac * plotW;
-      ctx.fillText(fmt(nyquist * frac, 0), Math.min(x, w - 20), h - 4);
+      ctx.fillText(fmt(nyquist * frac, 0), Math.min(x, w - 16), h - 2);
     });
 
     if (freqHoverX !== null) {
